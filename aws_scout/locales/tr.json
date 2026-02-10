@@ -1,0 +1,67 @@
+{
+    "app_name": "AWS Security Scout",
+    "scanning": "Taranıyor",
+    "scan_complete": "Tarama tamamlandı",
+    "error": "Hata",
+    "warning": "Uyarı",
+    "info": "Bilgi",
+    
+    "severity": {
+        "critical": "Kritik",
+        "high": "Yüksek",
+        "medium": "Orta",
+        "low": "Düşük"
+    },
+    
+    "risk_level": {
+        "secure": "Güvenli",
+        "medium_risk": "Orta Risk",
+        "high_risk": "Yüksek Risk"
+    },
+    
+    "report": {
+        "title": "AWS Güvenlik Tarama Raporu",
+        "generated_on": "Oluşturulma Tarihi",
+        "account_id": "AWS Hesap ID",
+        "security_score": "Güvenlik Skoru",
+        "risk_status": "Risk Durumu",
+        "summary": "Özet",
+        "total_findings": "Toplam Bulgu",
+        "quick_wins": "En Hızlı Düzeltilebilecek Bulgular",
+        "high_impact": "En Çok Puan Kazandıran Düzeltmeler",
+        "detailed_findings": "Detaylı Bulgular",
+        "finding_title": "Bulgu",
+        "severity": "Şiddet",
+        "resource": "Kaynak",
+        "description": "Açıklama",
+        "evidence": "Kanıt",
+        "remedy": "Düzeltme Önerisi",
+        "reference": "Referans",
+        "why_important": "Neden Önemli?"
+    },
+    
+    "check_categories": {
+        "s3": "Amazon S3",
+        "iam": "AWS IAM",
+        "ec2": "Amazon EC2 & Network",
+        "logging": "Logging & Audit",
+        "secrets": "Secrets & KMS"
+    },
+    
+    "messages": {
+        "no_findings": "Hiçbir güvenlik bulgusu bulunamadı!",
+        "scan_started": "AWS güvenlik taraması başlatıldı...",
+        "checking_service": "{service} servisi kontrol ediliyor...",
+        "checking_bucket": "Bucket {bucket} kontrol ediliyor...",
+        "checking_user": "Kullanıcı {user} kontrol ediliyor...",
+        "report_saved": "Rapor {file_path} konumuna kaydedildi",
+        "error_auth": "AWS kimlik doğrulama hatası: {error}",
+        "error_scan": "Tarama sırasında hata oluştu: {error}"
+    },
+    
+    "footer": {
+        "generated_by": "Tarafından oluşturuldu",
+        "disclaimer": "Bu rapor otomatik olarak oluşturulmuştur. Tüm bulgular manuel olarak doğrulanmalıdır.",
+        "no_modifications": "Bu araç AWS kaynaklarında hiçbir değişiklik yapmaz."
+    }
+}

@@ -1,0 +1,139 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3ReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListAllMyBuckets",
+                "s3:GetBucketLocation",
+                "s3:GetBucketPolicy",
+                "s3:GetBucketAcl",
+                "s3:GetPublicAccessBlock",
+                "s3:GetEncryptionConfiguration",
+                "s3:GetBucketVersioning"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "IAMReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListUsers",
+                "iam:ListAccessKeys",
+                "iam:ListMFADevices",
+                "iam:ListAttachedUserPolicies",
+                "iam:ListUserPolicies",
+                "iam:GetUserPolicy",
+                "iam:GetPolicy",
+                "iam:GetPolicyVersion",
+                "iam:ListRoles",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:GetRolePolicy"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "EC2ReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeInstances",
+                "ec2:DescribeImages",
+                "ec2:DescribeVolumes",
+                "ec2:DescribeInstanceAttribute",
+                "ec2:DescribeNetworkAcls"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudTrailReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "cloudtrail:DescribeTrails",
+                "cloudtrail:GetTrailStatus",
+                "cloudtrail:LookupEvents",
+                "cloudtrail:ListPublicKeys"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudWatchLogsReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "logs:FilterLogEvents"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SecretsManagerReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:ListSecrets",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetSecretValue"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "KMSReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "kms:ListKeys",
+                "kms:DescribeKey",
+                "kms:GetKeyRotationStatus",
+                "kms:ListAliases"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "STSReadAccess",
+            "Effect": "Allow",
+            "Action": [
+                "sts:GetCallerIdentity"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "ExplicitDenyWriteOperations",
+            "Effect": "Deny",
+            "Action": [
+                "s3:*",
+                "iam:*",
+                "ec2:*",
+                "cloudtrail:*",
+                "logs:*",
+                "secretsmanager:*",
+                "kms:*"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringNotLike": {
+                    "aws:PrincipalAction": [
+                        "s3:Get*",
+                        "s3:List*",
+                        "s3:Describe*",
+                        "iam:Get*",
+                        "iam:List*",
+                        "ec2:Describe*",
+                        "cloudtrail:Describe*",
+                        "cloudtrail:Get*",
+                        "cloudtrail:Lookup*",
+                        "logs:Describe*",
+                        "logs:Filter*",
+                        "secretsmanager:List*",
+                        "secretsmanager:Describe*",
+                        "secretsmanager:Get*",
+                        "kms:List*",
+                        "kms:Describe*",
+                        "kms:Get*",
+                        "sts:Get*"
+                    ]
+                }
+            }
+        }
+    ]
+}
