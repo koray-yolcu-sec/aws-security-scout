@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 
 class Severity(str, Enum):
@@ -18,6 +18,7 @@ class Severity(str, Enum):
           - Severity enum olabilir
           - "HIGH" gibi string olabilir
           - None / bilinmeyen olabilir
+          - int gibi saçma şeyler gelebilir -> LOW'a düşer
         """
         if isinstance(value, Severity):
             return value
@@ -28,15 +29,28 @@ class Severity(str, Enum):
         return Severity.LOW
 
 
-
 class Finding:
     """
-    Eski check'lerin kullandığı Finding imzasıyla uyumlu.
-    check_id=... ile çağrılsa bile çalışır.
-    Fazladan parametre gelirse de patlamaz.
+    Tek amaç: Repo içindeki farklı check'ler (eski/yeni) hangi formatta bulgu üretirse üretsin,
+    raporlayıcı/scorer tarafında PATLAMASIN.
+
+    Desteklenen alanlar (canonical):
+      - check_id / id
+      - title
+      - severity (Severity)
+      - resource
+      - why
+      - evidence
+      - remediation_console
+      - remediation_cli
+      - reference
+      - points (int)
+      - service
     """
+
     def __init__(
         self,
+        # canonical / yeni
         id: str = "",
         check_id: str = "",
         title: str = "",
@@ -49,28 +63,73 @@ class Finding:
         reference: str = "",
         points: Any = 0,
         service: str = "unknown",
-        **kwargs
+
+        # eski check'ler (compat)
+        resource_id: str = "",
+        description: str = "",
+        remedy: str = "",
+
+        **kwargs: Any,
     ):
-        self.id = check_id or id or ""
-        self.check_id = self.id  # geriye uyum
-        self.title = title
-        self.severity = severity
-        self.resource = resource
-        self.why = why
+        # ID normalize
+        self.id = (check_id or id or "").strip()
+        self.check_id = self.id  # backward compat
+
+        # Title
+        self.title = (title or "").strip()
+
+        # Severity -> enum normalize (KRİTİK fix)
+        self.severity: Severity = Severity.normalize(severity)
+
+        # Resource normalize (eski: resource_id)
+        self.resource = (resource or resource_id or "").strip()
+
+        # Why normalize (eski: description)
+        self.why = (why or description or "").strip()
+
+        # Evidence
         self.evidence = evidence
-        self.remediation_console = remediation_console
-        self.remediation_cli = remediation_cli
-        self.reference = reference
+
+        # Remediation normalize (eski: remedy)
+        self.remediation_console = (remediation_console or "").strip()
+        self.remediation_cli = (remediation_cli or "").strip()
+
+        # Eski "remedy" metnini console remediation’a fallback yap
+        if not self.remediation_console and remedy:
+            self.remediation_console = str(remedy).strip()
+
+        self.reference = (reference or "").strip()
+
+        # Points -> int
         try:
             self.points = int(points or 0)
         except Exception:
             self.points = 0
-        self.service = service or "unknown"
+
+        # Service normalize
+        self.service = (service or "unknown").strip() or "unknown"
+
+        # Extra
         self.extra = kwargs
 
 
-
 FindingLike = Union[Finding, Dict[str, Any]]
+
+
+def as_finding(obj: FindingLike) -> Finding:
+    """
+    dict -> Finding çevirir
+    Finding ise olduğu gibi döner
+
+    Reporter'larda (HTML/MD) loop başında bunu kullanınca:
+    'dict' object has no attribute 'severity' biter.
+    """
+    if isinstance(obj, Finding):
+        return obj
+    if isinstance(obj, dict):
+        return Finding(**obj)
+    # ekstrem durum: ne dict ne Finding
+    return Finding(title=str(obj), severity="LOW")
 
 
 class ScoringEngine:
@@ -81,7 +140,6 @@ class ScoringEngine:
 
     MAX_SCORE = 100
 
-    # İstersen burayı değiştirilebilir yaparsın ama şimdilik sabit.
     SEVERITY_POINTS = {
         Severity.CRITICAL: 25,
         Severity.HIGH: 15,
@@ -101,6 +159,7 @@ class ScoringEngine:
         return getattr(f, key, default)
 
     def _severity(self, f: FindingLike) -> Severity:
+        # Finding objesinde zaten Severity enum; dict ise normalize
         return Severity.normalize(self._get(f, "severity", Severity.LOW))
 
     def _points(self, f: FindingLike) -> int:
@@ -110,7 +169,6 @@ class ScoringEngine:
         """
         p = self._get(f, "points", None)
 
-        # points string gelirse (nadiren) int'e zorla
         if isinstance(p, str):
             p = p.strip()
             if p.isdigit():
@@ -126,22 +184,14 @@ class ScoringEngine:
     # Public API
     # -----------------------
     def add_finding(self, finding: FindingLike) -> None:
-        """Bulgu ekle."""
         self.findings.append(finding)
 
     def calculate_risk_score(self) -> int:
-        """
-        0-100 arası güvenlik skoru:
-        100 - (risk puanları toplamı), min 0
-        """
         total_risk_points = sum(self._points(f) for f in self.findings)
         security_score = max(0, self.MAX_SCORE - total_risk_points)
         return int(security_score)
 
     def get_risk_level(self, score: int) -> Tuple[str, str]:
-        """
-        Skora göre seviye + renk döner (terminal/rapor için).
-        """
         if score >= 80:
             return ("Güvenli", "#4CAF50")
         if score >= 50:
@@ -149,9 +199,6 @@ class ScoringEngine:
         return ("Yüksek Risk", "#D32F2F")
 
     def get_quick_wins(self, limit: int = 5) -> List[FindingLike]:
-        """
-        En kritik/puanı yüksek bulguları önce döndür.
-        """
         def key_fn(f: FindingLike) -> Tuple[int, int]:
             sev = self._severity(f)
             sev_rank = {
@@ -166,9 +213,6 @@ class ScoringEngine:
         return sorted_findings[: max(0, int(limit))]
 
     def get_summary(self) -> Dict[str, Any]:
-        """
-        Bulguların özet istatistiği.
-        """
         summary = {
             "total_findings": len(self.findings),
             "critical": 0,
@@ -192,16 +236,10 @@ class ScoringEngine:
         return summary
 
     def get_findings_by_severity(self, severity: Union[Severity, str]) -> List[FindingLike]:
-        """
-        Severity'e göre filtrele.
-        """
         target = Severity.normalize(severity)
         return [f for f in self.findings if self._severity(f) == target]
 
     def get_findings_by_service(self, service: str) -> List[FindingLike]:
-        """
-        Service adına göre filtrele.
-        """
         s = (service or "").strip().lower()
         out: List[FindingLike] = []
         for f in self.findings:
