@@ -1,192 +1,211 @@
-"""
-Security Score Engine
-Bulgu puanlama ve risk hesaplama sistemi
-"""
+# aws_scout/core/scorer.py
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
-class Severity:
-    """Severity seviyeleri ve puanları"""
-    CRITICAL = 25
-    HIGH = 15
-    MEDIUM = 8
-    LOW = 3
-    
+class Severity(str, Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
     @classmethod
-    def get_name(cls, value):
-        """Severity değerine göre isim döndür"""
-        mapping = {
-            cls.CRITICAL: "Critical",
-            cls.HIGH: "High",
-            cls.MEDIUM: "Medium",
-            cls.LOW: "Low"
-        }
-        return mapping.get(value, "Unknown")
-    
-    @classmethod
-    def get_color(cls, value):
-        """Severity değerine göre renk kodu döndür"""
-        mapping = {
-            cls.CRITICAL: "#D32F2F",  # Kırmızı
-            cls.HIGH: "#F57C00",      # Turuncu
-            cls.MEDIUM: "#FBC02D",    # Sarı
-            cls.LOW: "#388E3C"        # Yeşil
-        }
-        return mapping.get(value, "#757575")
+    def normalize(cls, value: Any) -> "Severity":
+        """
+        value:
+          - Severity enum olabilir
+          - "HIGH" gibi string olabilir
+          - None / bilinmeyen olabilir
+        """
+        if isinstance(value, Severity):
+            return value
+        if isinstance(value, str):
+            v = value.strip().upper()
+            if v in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                return Severity(v)
+        return Severity.LOW
+
 
 
 class Finding:
-    """Güvenlik bulgu sınıfı"""
-    
-    def __init__(self, check_id, resource_id, severity, title, description, 
-                 evidence, remedy, reference=None, service=None):
-        """
-        Bulgu başlatıcı
-        
-        Args:
-            check_id: Check benzersiz ID'si
-            resource_id: Etkilenen kaynak ID'si
-            severity: Severity seviyesi (Severity.CRITICAL vb.)
-            title: Bulgu başlığı
-            description: Bulgu açıklaması
-            evidence: Teknik kanıt
-            remedy: Düzeltme önerisi
-            reference: Referans linki (opsiyonel)
-            service: Servis adı (opsiyonel, varsayılan: 'General')
-        """
-        self.check_id = check_id
-        self.resource_id = resource_id
-        self.severity = severity
+    """
+    Eski check'lerin kullandığı Finding imzasıyla uyumlu.
+    check_id=... ile çağrılsa bile çalışır.
+    Fazladan parametre gelirse de patlamaz.
+    """
+    def __init__(
+        self,
+        id: str = "",
+        check_id: str = "",
+        title: str = "",
+        severity: Any = "LOW",
+        resource: str = "",
+        why: str = "",
+        evidence: Any = None,
+        remediation_console: str = "",
+        remediation_cli: str = "",
+        reference: str = "",
+        points: Any = 0,
+        service: str = "unknown",
+        **kwargs
+    ):
+        self.id = check_id or id or ""
+        self.check_id = self.id  # geriye uyum
         self.title = title
-        self.description = description
+        self.severity = severity
+        self.resource = resource
+        self.why = why
         self.evidence = evidence
-        self.remedy = remedy
+        self.remediation_console = remediation_console
+        self.remediation_cli = remediation_cli
         self.reference = reference
-        self.service = service if service else 'General'
-        self.points = severity  # Bulgu puanı
+        try:
+            self.points = int(points or 0)
+        except Exception:
+            self.points = 0
+        self.service = service or "unknown"
+        self.extra = kwargs
+
+
+
+FindingLike = Union[Finding, Dict[str, Any]]
 
 
 class ScoringEngine:
-    """Skor hesaplama motoru"""
-    
+    """
+    Risk puanı -> güvenlik skoru hesaplar.
+    Finding tipi hem dict hem Finding objesi olabilir.
+    """
+
     MAX_SCORE = 100
-    
-    def __init__(self):
-        """Skor motoru başlatıcı"""
-        self.findings = []
-    
-    def add_finding(self, finding):
+
+    # İstersen burayı değiştirilebilir yaparsın ama şimdilik sabit.
+    SEVERITY_POINTS = {
+        Severity.CRITICAL: 25,
+        Severity.HIGH: 15,
+        Severity.MEDIUM: 8,
+        Severity.LOW: 3,
+    }
+
+    def __init__(self) -> None:
+        self.findings: List[FindingLike] = []
+
+    # -----------------------
+    # Internal helpers
+    # -----------------------
+    def _get(self, f: FindingLike, key: str, default: Any = None) -> Any:
+        if isinstance(f, dict):
+            return f.get(key, default)
+        return getattr(f, key, default)
+
+    def _severity(self, f: FindingLike) -> Severity:
+        return Severity.normalize(self._get(f, "severity", Severity.LOW))
+
+    def _points(self, f: FindingLike) -> int:
         """
-        Bulgu ekle
-        
-        Args:
-            finding: Finding objesi
+        1) finding içinde points varsa onu kullan
+        2) yoksa severity'den puan üret
         """
+        p = self._get(f, "points", None)
+
+        # points string gelirse (nadiren) int'e zorla
+        if isinstance(p, str):
+            p = p.strip()
+            if p.isdigit():
+                return int(p)
+
+        if isinstance(p, (int, float)):
+            return int(p)
+
+        sev = self._severity(f)
+        return int(self.SEVERITY_POINTS.get(sev, 0))
+
+    # -----------------------
+    # Public API
+    # -----------------------
+    def add_finding(self, finding: FindingLike) -> None:
+        """Bulgu ekle."""
         self.findings.append(finding)
-    
-    def calculate_risk_score(self):
+
+    def calculate_risk_score(self) -> int:
         """
-        Risk skorunu hesapla
-        
-        Returns:
-            int: 0-100 arası güvenlik skoru
+        0-100 arası güvenlik skoru:
+        100 - (risk puanları toplamı), min 0
         """
-        # Toplam risk puanı (bulguların puanları toplamı)
-        total_risk_points = sum(finding.points for finding in self.findings)
-        
-        # Güvenlik skorunu hesapla (maksimum skordan risk puanını düş)
-        # Not: Teorik olarak risk puanı 100'ü aşabilir, bu durumda 0'a düşer
+        total_risk_points = sum(self._points(f) for f in self.findings)
         security_score = max(0, self.MAX_SCORE - total_risk_points)
-        
-        return security_score
-    
-    def get_risk_level(self, score):
+        return int(security_score)
+
+    def get_risk_level(self, score: int) -> Tuple[str, str]:
         """
-        Skora göre risk seviyesini belirle
-        
-        Args:
-            score: Güvenlik skoru (0-100)
-            
-        Returns:
-            tuple: (seviye_adı, renk_kodu)
+        Skora göre seviye + renk döner (terminal/rapor için).
         """
         if score >= 80:
-            return ("Güvenli", "#4CAF50")  # Yeşil
-        elif score >= 50:
-            return ("Orta Risk", "#FFC107")  # Sarı
-        else:
-            return ("Yüksek Risk", "#D32F2F")  # Kırmızı
-    
-    def get_quick_wins(self, limit=5):
+            return ("Güvenli", "#4CAF50")
+        if score >= 50:
+            return ("Orta Risk", "#FFC107")
+        return ("Yüksek Risk", "#D32F2F")
+
+    def get_quick_wins(self, limit: int = 5) -> List[FindingLike]:
         """
-        En hızlı düzeltilebilecek bulguları listele
-        
-        Args:
-            limit: Maksimum bulgu sayısı
-            
-        Returns:
-            list: Finding listesi (düşük remediation süresi öncelikli)
+        En kritik/puanı yüksek bulguları önce döndür.
         """
-        # Öncelik: Low severity bulgular önce
-        sorted_findings = sorted(
-            self.findings,
-            key=lambda f: f.severity
-        )
-        return sorted_findings[:limit]
-    
-    def get_high_impact_fixes(self, limit=5):
+        def key_fn(f: FindingLike) -> Tuple[int, int]:
+            sev = self._severity(f)
+            sev_rank = {
+                Severity.CRITICAL: 4,
+                Severity.HIGH: 3,
+                Severity.MEDIUM: 2,
+                Severity.LOW: 1,
+            }.get(sev, 0)
+            return (sev_rank, self._points(f))
+
+        sorted_findings = sorted(self.findings, key=key_fn, reverse=True)
+        return sorted_findings[: max(0, int(limit))]
+
+    def get_summary(self) -> Dict[str, Any]:
         """
-        En çok puan kazandıran düzeltmeleri listele
-        
-        Args:
-            limit: Maksimum bulgu sayısı
-            
-        Returns:
-            list: Finding listesi (yüksek severity öncelikli)
-        """
-        # Öncelik: High severity bulgular önce
-        sorted_findings = sorted(
-            self.findings,
-            key=lambda f: f.severity,
-            reverse=True
-        )
-        return sorted_findings[:limit]
-    
-    def get_summary(self):
-        """
-        Bulgular özetini al
-        
-        Returns:
-            dict: Özet istatistikler
+        Bulguların özet istatistiği.
         """
         summary = {
-            'total_findings': len(self.findings),
-            'critical': 0,
-            'high': 0,
-            'medium': 0,
-            'low': 0,
-            'total_points': sum(f.points for f in self.findings)
+            "total_findings": len(self.findings),
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "total_points": sum(self._points(f) for f in self.findings),
         }
-        
-        for finding in self.findings:
-            if finding.severity == Severity.CRITICAL:
-                summary['critical'] += 1
-            elif finding.severity == Severity.HIGH:
-                summary['high'] += 1
-            elif finding.severity == Severity.MEDIUM:
-                summary['medium'] += 1
-            elif finding.severity == Severity.LOW:
-                summary['low'] += 1
-        
+
+        for f in self.findings:
+            sev = self._severity(f)
+            if sev == Severity.CRITICAL:
+                summary["critical"] += 1
+            elif sev == Severity.HIGH:
+                summary["high"] += 1
+            elif sev == Severity.MEDIUM:
+                summary["medium"] += 1
+            else:
+                summary["low"] += 1
+
         return summary
-    
-    def get_findings_by_severity(self, severity):
+
+    def get_findings_by_severity(self, severity: Union[Severity, str]) -> List[FindingLike]:
         """
-        Severity'e göre bulguları filtrele
-        
-        Args:
-            severity: Severity değeri
-            
-        Returns:
-            list: Finding listesi
+        Severity'e göre filtrele.
         """
-        return [f for f in self.findings if f.severity == severity]
+        target = Severity.normalize(severity)
+        return [f for f in self.findings if self._severity(f) == target]
+
+    def get_findings_by_service(self, service: str) -> List[FindingLike]:
+        """
+        Service adına göre filtrele.
+        """
+        s = (service or "").strip().lower()
+        out: List[FindingLike] = []
+        for f in self.findings:
+            fs = str(self._get(f, "service", "unknown") or "unknown").strip().lower()
+            if fs == s:
+                out.append(f)
+        return out

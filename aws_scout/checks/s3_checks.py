@@ -190,16 +190,30 @@ class S3Check:
             
             if status != 'Enabled':
                 self.findings.append(Finding(
-                    check_id="S3-VERSIONING",
-                    resource_id=bucket_name,
-                    severity=Severity.LOW,
-                    title="S3 Bucket'ında Versioning Aktif Değil",
-                    description=f"Bucket {bucket_name} için versioning aktif değil. "
-                               f"Verilerin yanlışlıkla silinmesi veya üzerine yazılmasına karşı koruma yok.",
-                    evidence=f"Versioning Status: {status}",
-                    remedy=self._remedy_versioning(bucket_name),
-                    reference="https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html"
-                ))
+        check_id="S3-VERSIONING",
+        service="s3",
+
+        resource=bucket_name,
+        severity=Severity.LOW,
+
+        title="S3 Bucket'ında Versioning Aktif Değil",
+
+        why=(
+            f"Bucket {bucket_name} için versioning aktif değil. "
+            f"Verilerin yanlışlıkla silinmesi veya üzerine yazılmasına karşı koruma yok."
+        ),
+
+        evidence=f"Versioning Status: {status}",
+
+        remediation_console=self._remedy_versioning(bucket_name),
+        remediation_cli="",
+
+        reference="https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html",
+
+        points=3,
+    ))
+
+
                 
         except ClientError as e:
             print(f"Versioning kontrol hatası ({bucket_name}): {str(e)}")

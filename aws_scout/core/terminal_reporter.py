@@ -1,303 +1,350 @@
 """Terminal Reporter Module
-Terminal tabanlı güvenlik raporlama sistemi
+Terminal tabanlı güvenlik raporlama sistemi (TR odaklı)
+
+Bu reporter hem dict finding'leri hem de Finding objelerini destekler.
+Beklenen alanlar (dict veya object):
+- id / check_id
+- title
+- severity (Severity enum veya "HIGH" gibi string)
+- resource
+- why
+- evidence
+- remediation_console
+- remediation_cli
+- reference
+- points
+- service
 """
+from typing import List, Dict, Any, Tuple
+
 from ..core.scorer import Severity, Finding
-from typing import List, Dict, Any
 
 
 class TerminalReporter:
     """Terminal raporlama sınıfı"""
-    
+
     # ANSI renk kodları
     COLORS = {
-        'red': '\033[91m',
-        'green': '\033[92m',
-        'yellow': '\033[93m',
-        'blue': '\033[94m',
-        'magenta': '\033[95m',
-        'cyan': '\033[96m',
-        'white': '\033[97m',
-        'reset': '\033[0m',
-        'bold': '\033[1m',
+        "red": "\033[91m",
+        "green": "\033[92m",
+        "yellow": "\033[93m",
+        "blue": "\033[94m",
+        "magenta": "\033[95m",
+        "cyan": "\033[96m",
+        "white": "\033[97m",
+        "reset": "\033[0m",
+        "bold": "\033[1m",
     }
-    
+
     # Severity renkleri
     SEVERITY_COLORS = {
-        'critical': '\033[91m',  # Kırmızı
-        'high': '\033[93m',      # Sarı/Turuncu
-        'medium': '\033[95m',    # Mor
-        'low': '\033[92m',       # Yeşil
+        "critical": "\033[91m",  # Kırmızı
+        "high": "\033[93m",      # Sarı/Turuncu
+        "medium": "\033[95m",    # Mor
+        "low": "\033[92m",       # Yeşil
+        "unknown": "\033[97m",   # Beyaz
     }
-    
+
     # Türkçe severity isimleri
     SEVERITY_NAMES = {
-        'critical': 'KRİTİK',
-        'high': 'YÜKSEK',
-        'medium': 'ORTA',
-        'low': 'DÜŞÜK',
+        "critical": "KRİTİK",
+        "high": "YÜKSEK",
+        "medium": "ORTA",
+        "low": "DÜŞÜK",
+        "unknown": "BİLİNMEYEN",
     }
-    
-    def __init__(self, show_details=False, show_summary_only=False):
+
+    def __init__(self, show_details: bool = False, show_summary_only: bool = False):
         """
-        Terminal Reporter başlatıcı
-        
         Args:
             show_details: Detaylı bulgular gösterilsin mi
             show_summary_only: Sadece özet gösterilsin mi
         """
         self.show_details = show_details
         self.show_summary_only = show_summary_only
-    
+
+    # -------------------------
+    # Helpers (dict/object safe)
+    # -------------------------
+    def _get(self, finding: Any, key: str, default: Any = None) -> Any:
+        if isinstance(finding, dict):
+            return finding.get(key, default)
+        return getattr(finding, key, default)
+
+    def _severity_norm(self, finding: Any) -> Severity:
+        sev = self._get(finding, "severity", Severity.LOW)
+        if isinstance(sev, Severity):
+            return sev
+        if isinstance(sev, str):
+            s = sev.strip().upper()
+            if s in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                return Severity(s)
+        return Severity.LOW
+
+    def _points(self, finding: Any) -> int:
+        p = self._get(finding, "points", 0)
+        try:
+            return int(p or 0)
+        except Exception:
+            return 0
+
+    def _id(self, finding: Any) -> str:
+        return str(self._get(finding, "id", "") or self._get(finding, "check_id", "") or "")
+
+    def _title(self, finding: Any) -> str:
+        return str(self._get(finding, "title", "") or "")
+
+    def _service(self, finding: Any) -> str:
+        return str(self._get(finding, "service", "Bilinmeyen") or "Bilinmeyen")
+
+    def _resource(self, finding: Any) -> str:
+        return str(self._get(finding, "resource", "") or "")
+
+    def _why(self, finding: Any) -> str:
+        # why alanı yoksa description gibi eski isimlere düş
+        return str(
+            self._get(finding, "why", "")
+            or self._get(finding, "description", "")
+            or ""
+        )
+
+    def _evidence(self, finding: Any) -> Any:
+        return self._get(finding, "evidence", None)
+
+    def _remedy(self, finding: Any) -> str:
+        # remediation_console / remediation_cli yoksa remedy'e düş
+        console = str(self._get(finding, "remediation_console", "") or "")
+        cli = str(self._get(finding, "remediation_cli", "") or "")
+        legacy = str(self._get(finding, "remedy", "") or "")
+
+        parts = []
+        if console:
+            parts.append(f"Console:\n{console}")
+        if cli:
+            parts.append(f"CLI:\n{cli}")
+        if not parts and legacy:
+            parts.append(legacy)
+
+        return "\n\n".join(parts).strip()
+
+    def _reference(self, finding: Any) -> str:
+        return str(self._get(finding, "reference", "") or "")
+
+    def _severity_key(self, sev: Severity) -> str:
+        if sev == Severity.CRITICAL:
+            return "critical"
+        if sev == Severity.HIGH:
+            return "high"
+        if sev == Severity.MEDIUM:
+            return "medium"
+        if sev == Severity.LOW:
+            return "low"
+        return "unknown"
+
+    # -------------------------
+    # Print blocks
+    # -------------------------
     def print_header(self):
-        """Rapor başlığını yazdır"""
         print(f"\n{self.COLORS['bold']}{self.COLORS['cyan']}{'='*70}{self.COLORS['reset']}")
         print(f"{self.COLORS['bold']}{self.COLORS['cyan']}       AWS Security Scout - Güvenlik Tarama Raporu{self.COLORS['reset']}")
         print(f"{self.COLORS['bold']}{self.COLORS['cyan']}{'='*70}{self.COLORS['reset']}\n")
-    
+
     def print_account_info(self, account_id: str, region: str, score: int):
-        """
-        Hesap bilgilerini yazdır
-        
-        Args:
-            account_id: AWS hesap ID'si
-            region: AWS bölgesi
-            score: Güvenlik skoru
-        """
         print(f"📋 Hesap ID: {account_id}")
         print(f"🌍 Bölge: {region}")
-        
-        # Skoru renklendir
+
         if score >= 80:
-            color = self.COLORS['green']
+            color = self.COLORS["green"]
             status = "GÜVENLİ"
         elif score >= 50:
-            color = self.COLORS['yellow']
+            color = self.COLORS["yellow"]
             status = "ORTA RİSK"
         else:
-            color = self.COLORS['red']
+            color = self.COLORS["red"]
             status = "YÜKSEK RİSK"
-        
+
         print(f"🔒 Güvenlik Skoru: {color}{self.COLORS['bold']}{score}/100{self.COLORS['reset']}")
         print(f"⚠️  Durum: {color}{self.COLORS['bold']}{status}{self.COLORS['reset']}\n")
         print(f"{self.COLORS['cyan']}{'-'*70}{self.COLORS['reset']}\n")
-    
-    def print_service_summary(self, service_name: str, findings: List[Finding]):
-        """
-        Servis bazlı özeti yazdır
-        
-        Args:
-            service_name: Servis adı
-            findings: Bulgu listesi
-        """
+
+    def print_service_summary(self, service_name: str, findings: List[Any]):
         if not findings:
             return
-        
-        # Servis ikonu
+
         icons = {
-            's3': '🪣',
-            'iam': '🔑',
-            'ec2': '💻',
-            'cloudtrail': '📊',
-            'cloudwatch logs': '📝',
-            'secretsmanager': '🔐',
-            'kms': '🛡️',
+            "s3": "🪣",
+            "iam": "🔑",
+            "ec2": "💻",
+            "cloudtrail": "📊",
+            "logs": "📝",
+            "cloudwatch logs": "📝",
+            "secrets": "🔐",
+            "secretsmanager": "🔐",
+            "kms": "🛡️",
         }
-        icon = icons.get(service_name.lower(), '📌')
-        
+
+        icon = icons.get(service_name.strip().lower(), "📌")
+
         print(f"\n{self.COLORS['bold']}{icon} {service_name.upper()}{self.COLORS['reset']}")
         print(f"{self.COLORS['cyan']}{'-'*70}{self.COLORS['reset']}")
-        
-        # İstatistikler
-        critical = sum(1 for f in findings if f.severity == Severity.CRITICAL)
-        high = sum(1 for f in findings if f.severity == Severity.HIGH)
-        medium = sum(1 for f in findings if f.severity == Severity.MEDIUM)
-        low = sum(1 for f in findings if f.severity == Severity.LOW)
-        total_points = sum(f.points for f in findings)
-        
+
+        critical = sum(1 for f in findings if self._severity_norm(f) == Severity.CRITICAL)
+        high = sum(1 for f in findings if self._severity_norm(f) == Severity.HIGH)
+        medium = sum(1 for f in findings if self._severity_norm(f) == Severity.MEDIUM)
+        low = sum(1 for f in findings if self._severity_norm(f) == Severity.LOW)
+        total_points = sum(self._points(f) for f in findings)
+
         print(f"   Toplam Bulgu: {len(findings)}")
         print(f"   {self.COLORS['red']}●{self.COLORS['reset']} Kritik: {critical}")
         print(f"   {self.COLORS['yellow']}●{self.COLORS['reset']} Yüksek: {high}")
         print(f"   {self.COLORS['magenta']}●{self.COLORS['reset']} Orta: {medium}")
         print(f"   {self.COLORS['green']}●{self.COLORS['reset']} Düşük: {low}")
         print(f"   💰 Risk Puanı: {total_points}")
-    
-    def print_quick_actions(self, findings: List[Finding], limit=5):
-        """
-        Hızlı aksiyonlar bölümünü yazdır
-        
-        Args:
-            findings: Bulgu listesi
-            limit: Maksimum bulgu sayısı
-        """
+
+    def print_quick_actions(self, findings: List[Any], limit: int = 5):
         if not findings:
             return
-        
-        # En yüksek öncelikli bulguları al (severity'e göre sırala)
+
+        def rank(sev: Severity) -> int:
+            return {Severity.CRITICAL: 4, Severity.HIGH: 3, Severity.MEDIUM: 2, Severity.LOW: 1}.get(sev, 0)
+
         sorted_findings = sorted(
             findings,
-            key=lambda f: f.severity,
+            key=lambda f: (rank(self._severity_norm(f)), self._points(f)),
             reverse=True
-        )[:limit]
-        
+        )[: max(0, int(limit))]
+
         print(f"\n{self.COLORS['bold']}{self.COLORS['yellow']}⚡ HIZLI AKSİYONLAR (En Öncelikli Düzeltmeler){self.COLORS['reset']}")
         print(f"{self.COLORS['cyan']}{'='*70}{self.COLORS['reset']}\n")
-        
-        for i, finding in enumerate(sorted_findings, 1):
-            severity_name = self._get_severity_name(finding.severity)
-            severity_color = self._get_severity_color(finding.severity)
-            
-            print(f"{i}. {self.COLORS['bold']}{finding.title}{self.COLORS['reset']}")
-            print(f"   Kaynak: {finding.resource_id}")
-            print(f"   Severity: {severity_color}{severity_name}{self.COLORS['reset']} (+{finding.points} puan)")
-            print(f"   Neden: {finding.description[:100]}...")
+
+        for i, f in enumerate(sorted_findings, 1):
+            sev = self._severity_norm(f)
+            sev_key = self._severity_key(sev)
+            sev_name = self.SEVERITY_NAMES[sev_key]
+            sev_color = self.SEVERITY_COLORS[sev_key]
+
+            title = self._title(f)
+            resource = self._resource(f)
+            why = self._why(f)
+            pts = self._points(f)
+
+            print(f"{i}. {self.COLORS['bold']}{title}{self.COLORS['reset']}")
+            if resource:
+                print(f"   Kaynak: {resource}")
+            print(f"   Severity: {sev_color}{sev_name}{self.COLORS['reset']} (+{pts} puan)")
+
+            if why:
+                short = (why[:140] + "...") if len(why) > 140 else why
+                print(f"   Neden: {short}")
             print()
-            
-            # Düzeltme önerisi
+
             if self.show_details:
-                print(f"   {self.COLORS['cyan']}🔧 Düzeltme:{self.COLORS['reset']}")
-                remedy_lines = finding.remedy.strip().split('\n')
-                for line in remedy_lines[:5]:  # İlk 5 satır
-                    print(f"   {line}")
-                print()
-    
-    def print_detailed_findings(self, findings: List[Finding]):
-        """
-        Detaylı bulguları yazdır
-        
-        Args:
-            findings: Bulgu listesi
-        """
+                remedy = self._remedy(f)
+                if remedy:
+                    print(f"   {self.COLORS['cyan']}🔧 Düzeltme:{self.COLORS['reset']}")
+                    lines = remedy.splitlines()
+                    for line in lines[:8]:
+                        print(f"   {line}")
+                    print()
+
+    def print_detailed_findings(self, findings: List[Any]):
         if not findings or not self.show_details:
             return
-        
+
         print(f"\n{self.COLORS['bold']}{self.COLORS['blue']}📋 DETAYLI BULGULAR{self.COLORS['reset']}")
         print(f"{self.COLORS['cyan']}{'='*70}{self.COLORS['reset']}\n")
-        
-        for i, finding in enumerate(findings, 1):
-            severity_name = self._get_severity_name(finding.severity)
-            severity_color = self._get_severity_color(finding.severity)
-            
-            print(f"{self.COLORS['bold']}{i}. {finding.title}{self.COLORS['reset']}")
+
+        for i, f in enumerate(findings, 1):
+            sev = self._severity_norm(f)
+            sev_key = self._severity_key(sev)
+            sev_name = self.SEVERITY_NAMES[sev_key]
+            sev_color = self.SEVERITY_COLORS[sev_key]
+
+            print(f"{self.COLORS['bold']}{i}. {self._title(f)}{self.COLORS['reset']}")
             print(f"   {self.COLORS['cyan']}{'─'*70}{self.COLORS['reset']}")
-            print(f"   📌 ID: {finding.check_id}")
-            print(f"   🎯 Kaynak: {finding.resource_id}")
-            print(f"   ⚠️  Severity: {severity_color}{severity_name}{self.COLORS['reset']} (+{finding.points} puan)")
-            print(f"   📝 Açıklama: {finding.description}")
-            print(f"   🔍 Kanıt: {finding.evidence}")
-            print(f"\n   {self.COLORS['green']}🔧 Düzeltme Önerisi:{self.COLORS['reset']}")
-            print(f"   {finding.remedy}")
-            
-            if finding.reference:
-                print(f"\n   📚 Referans: {finding.reference}")
-            
+            print(f"   📌 ID: {self._id(f)}")
+
+            resource = self._resource(f)
+            if resource:
+                print(f"   🎯 Kaynak: {resource}")
+
+            print(f"   ⚠️  Severity: {sev_color}{sev_name}{self.COLORS['reset']} (+{self._points(f)} puan)")
+
+            why = self._why(f)
+            if why:
+                print(f"   📝 Açıklama: {why}")
+
+            evidence = self._evidence(f)
+            if evidence is not None and evidence != "":
+                print(f"   🔍 Kanıt: {evidence}")
+
+            remedy = self._remedy(f)
+            if remedy:
+                print(f"\n   {self.COLORS['green']}🔧 Düzeltme Önerisi:{self.COLORS['reset']}")
+                for line in remedy.splitlines():
+                    print(f"   {line}")
+
+            ref = self._reference(f)
+            if ref:
+                print(f"\n   📚 Referans: {ref}")
+
             print(f"\n{self.COLORS['cyan']}{'─'*70}{self.COLORS['reset']}\n")
-    
+
     def print_footer(self):
-        """Rapor footer'ını yazdır"""
         print(f"\n{self.COLORS['cyan']}{'='*70}{self.COLORS['reset']}")
         print(f"{self.COLORS['cyan']}✓ Rapor oluşturuldu{self.COLORS['reset']}")
-        print(f"👤 Geliştirici: Koray Yolcu (kkyolcu@gmail.com)")
-        print(f"🔗 GitHub: https://github.com/koray-yolcu-sec/aws-security-scout")
-        print(f"⚠️  Bu araç tam READ-ONLY modunda çalışır, AWS kaynaklarınızda değişiklik yapmaz\n")
-    
+        print("👤 Geliştirici: Koray Yolcu (kkyolcu@gmail.com)")
+        print("🔗 GitHub: https://github.com/koray-yolcu-sec/aws-security-scout")
+        print("⚠️  Bu araç tam READ-ONLY modunda çalışır, AWS kaynaklarınızda değişiklik yapmaz\n")
+
     def print_error(self, message: str):
-        """Hata mesajı yazdır"""
-        print(f"{self.COLORS['red']}✗ HATA: {message}{self.COLORS['reset']}", file=None)
-    
-    def print_success(self, message: str):
-        """Başarı mesajı yazdır"""
-        print(f"{self.COLORS['green']}✓ {message}{self.COLORS['reset']}")
-    
-    def print_info(self, message: str):
-        """Bilgi mesajı yazdır"""
-        print(f"{self.COLORS['cyan']}ℹ {message}{self.COLORS['reset']}")
-    
-    def print_warning(self, message: str):
-        """Uyarı mesajı yazdır"""
-        print(f"{self.COLORS['yellow']}⚠ {message}{self.COLORS['reset']}")
-    
-    def _get_severity_name(self, severity_value: int) -> str:
-        """Severity değerine göre Türkçe isim döndür"""
-        if severity_value == Severity.CRITICAL:
-            return self.SEVERITY_NAMES['critical']
-        elif severity_value == Severity.HIGH:
-            return self.SEVERITY_NAMES['high']
-        elif severity_value == Severity.MEDIUM:
-            return self.SEVERITY_NAMES['medium']
-        elif severity_value == Severity.LOW:
-            return self.SEVERITY_NAMES['low']
-        else:
-            return 'BİLİNMEYEN'
-    
-    def _get_severity_color(self, severity_value: int) -> str:
-        """Severity değerine göre renk kodu döndür"""
-        if severity_value == Severity.CRITICAL:
-            return self.SEVERITY_COLORS['critical']
-        elif severity_value == Severity.HIGH:
-            return self.SEVERITY_COLORS['high']
-        elif severity_value == Severity.MEDIUM:
-            return self.SEVERITY_COLORS['medium']
-        elif severity_value == Severity.LOW:
-            return self.SEVERITY_COLORS['low']
-        else:
-            return self.COLORS['white']
-    
+        print(f"{self.COLORS['red']}✗ HATA: {message}{self.COLORS['reset']}")
+
     def generate_report(
         self,
         account_id: str,
         region: str,
-        findings: List[Finding],
+        findings: List[Any],
         score: int,
-        summary: Dict[str, Any]
+        summary: Dict[str, Any],
     ):
-        """
-        Komple terminal raporu oluştur
-        
-        Args:
-            account_id: AWS hesap ID'si
-            region: AWS bölgesi
-            findings: Bulgu listesi
-            score: Güvenlik skoru
-            summary: Özet istatistikler
-        """
         # Başlık
         self.print_header()
-        
+
         # Hesap bilgileri
         self.print_account_info(account_id, region, score)
-        
-        if not self.show_summary_only:
-            # Servis bazlı özet
-            services = {}
-            for finding in findings:
-                service = getattr(finding, 'service', 'Bilinmeyen')
-                if service not in services:
-                    services[service] = []
-                services[service].append(finding)
-            
-            # Her servis için özet yazdır
-            for service_name, service_findings in services.items():
-                self.print_service_summary(service_name, service_findings)
-            
-            # Hızlı aksiyonlar
-            self.print_quick_actions(findings)
-            
-            # Detaylı bulgular (eğer istenmişse)
-            if self.show_details:
-                self.print_detailed_findings(findings)
-        else:
-            # Sadece özet modu
+
+        # Summary only mod
+        if self.show_summary_only:
             print(f"\n{self.COLORS['bold']}{self.COLORS['blue']}📊 ÖZET İSTATİSTİKLER{self.COLORS['reset']}")
             print(f"{self.COLORS['cyan']}{'─'*70}{self.COLORS['reset']}\n")
-            print(f"Toplam Bulgu: {summary['total_findings']}")
-            print(f"  {self.COLORS['red']}●{self.COLORS['reset']} Kritik: {summary['critical']}")
-            print(f"  {self.COLORS['yellow']}●{self.COLORS['reset']} Yüksek: {summary['high']}")
-            print(f"  {self.COLORS['magenta']}●{self.COLORS['reset']} Orta: {summary['medium']}")
-            print(f"  {self.COLORS['green']}●{self.COLORS['reset']} Düşük: {summary['low']}")
-            print(f"  💰 Toplam Risk Puanı: {summary['total_points']}\n")
-            
-            # Hızlı aksiyonlar
+            print(f"Toplam Bulgu: {summary.get('total_findings', len(findings))}")
+            print(f"  {self.COLORS['red']}●{self.COLORS['reset']} Kritik: {summary.get('critical', 0)}")
+            print(f"  {self.COLORS['yellow']}●{self.COLORS['reset']} Yüksek: {summary.get('high', 0)}")
+            print(f"  {self.COLORS['magenta']}●{self.COLORS['reset']} Orta: {summary.get('medium', 0)}")
+            print(f"  {self.COLORS['green']}●{self.COLORS['reset']} Düşük: {summary.get('low', 0)}")
+            print(f"  💰 Toplam Risk Puanı: {summary.get('total_points', 0)}\n")
+
             self.print_quick_actions(findings)
-        
+            self.print_footer()
+            return
+
+        # Servis bazlı grupla
+        services: Dict[str, List[Any]] = {}
+        for f in findings:
+            svc = self._service(f)
+            services.setdefault(svc, []).append(f)
+
+        # Her servis için özet
+        for service_name, service_findings in services.items():
+            self.print_service_summary(service_name, service_findings)
+
+        # Hızlı aksiyonlar
+        self.print_quick_actions(findings)
+
+        # Detaylı bulgular
+        if self.show_details:
+            self.print_detailed_findings(findings)
+
         # Footer
         self.print_footer()
